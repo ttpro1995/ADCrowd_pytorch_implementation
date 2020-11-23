@@ -55,6 +55,26 @@ class BasicDeformableConv2D(nn.Module):
         mask = self.Sigmoid(mask_origin)
         return self.deformable_conv2d(x, offset, mask)
 
+class DilatedInceptionModule(nn.Module):
+    def __init__(self, in_channels, out_channels, **kwargs):
+        super(DilatedInceptionModule, self).__init__()
+
+        # Deformable Layer
+        self.conv_part_1 = nn.Conv2d(in_channels, out_channels, 3, 1, 1, 1)
+        self.conv_part_2 = nn.Conv2d(in_channels, out_channels, 3, 1, 1, 3)
+        self.conv_part_3 = nn.Conv2d(in_channels, out_channels, 3, 1, 1, 6)
+        self.conv_part_4 = nn.Conv2d(in_channels, out_channels, 3, 1, 1, 9)
+
+    def forward(self, x):
+        # do the deformable convolution
+        part_1 = self.conv_part_1(x)
+        part_2 = self.conv_part_2(x)
+        part_3 = self.conv_part_3(x)
+        part_4 = self.conv_part_4(x)
+        # concat
+        output = torch.cat((part_1, part_2, part_3, part_4), dim=1)
+        return output
+
 
 class DeformableInceptionModule(nn.Module):
     def __init__(self, in_channels, out_channels, **kwargs):
@@ -83,6 +103,31 @@ class CONV2D1X1(nn.Module):
 
     def forward(self, x):
         return self.model(x)
+
+class AMGNet(nn.Module):
+    def __init__(self):
+        super(AMGNet, self).__init__()
+        # get front end
+        self.front_end = nn.Sequential(*(list(list(models.vgg16(True).children())[0].children())[0:23]))
+        # weight initialization
+        self.front_end.apply(lambda m: nn.init.xavier_uniform_(m.weight, 1) if isinstance(m, nn.Conv2d) else None)
+        # get back end
+        self.back_end = nn.Sequential(
+            DilatedInceptionModule(512, 256),
+            CONV2D1X1(256 * 3, 256),
+            DilatedInceptionModule(256, 128),
+            CONV2D1X1(128 * 3, 128),
+            DilatedInceptionModule(128, 64),
+            CONV2D1X1(64 * 3, 2)
+        )
+        self.relu = nn.LeakyReLU(0.1)
+
+    def forward(self, x):
+        features = self.front_end(x * 255)
+        # if we need any process, code here
+        out = self.back_end(features)
+        return out
+
 
 
 class DMENet(nn.Module):
